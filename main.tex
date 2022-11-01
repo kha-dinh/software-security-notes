@@ -238,21 +238,100 @@ Unlike the stack where memory allocations are automatically done by the compiler
     \item Create an entry point for other attacks
 \end{itemize}
 
-\section{Memory corruption}
+\section{Attack vectors}
+\subsection{Memory corruption}
 % Low-level vs. high-levvel exploits
 In this article, we only concern with \emph{low-level exploits}. 
 We assume that the program logic is implemented perfectly, i.e., no logic bugs.
 
-
 Memory corruption is the root of all low-level exploits.
-This means that a memory-safe program is unexploitable.
 
-%Why are there corruption?
-Memory corruption happens because of the memory unsafe nature of low-level programming languages (\ie, C/C++).
+There are two steps in triggering memory corruption~\cite{szekeres2013sok}. 
+The first step is to make create an invalid pointer, and the second step is to
+dereference it. There are two types of invalid pointer, \emph{out-of-bound}
+pointers and \emph{dangling} pointers.
+In the literature, dereferencing an out-of-bound pointer is referred to as
+\emph{spatial error}, and dereferencing a dangling pointer is referred to as
+\emph{temporal error}.
+
+\subsubsection{Spatial memory error}
+Each memory object occupies a continuous region within the virtual address space.
+This region has a lower bound (lower address) and an upper bound (higher address). 
+For instance, \mintinline{C}{void *base = malloc(512)} allocate heap object with
+the bounds of $[base, base + 512]$.
+Similarly, stack objects also have bounds, \eg, \mintinline{C}{char* buffer[512]}.
+
+
+An out-of-bound pointer points outside the bounds of the object that it
+supposes to refer to.
+In type-safe languages such as Rust and Go, the compiler keeps track of
+statically bounded objects, and automatically insert bound check for
+dynamically allocated objects so that its pointers cannot go out of bound.
+However, in C/C++, the programmer has to be aware of pointers and object
+bounds, which leads to exploitable low-level bugs.
+
+
+A common trigger for spatial memory error is through \emph{buffer overflow},
+where a pointer to a buffer is continuously incremented/decremented in a loop
+(without proper bounds check).
+
+\begin{wrapfigure}[12]{r}{.4\textwidth}
+\begin{minted}{C}
+int main()
+{
+  char buf[8];
+  // buf can be overflow
+  gets(buf); 
+  printf("%s\n", buf);
+  return 0;
+}
+\end{minted}
+\captionof{listing}{Code with buffer overflow vulnerability}
+\label{lst:buffer_overflow}
+\end{wrapfigure}
+For example, in \cref{lst:buffer_overflow}, the \texttt{gets} function copy
+data from \texttt{stdio} into an array on the stack.
+However, \texttt{gets} is not aware of the buffer size, so the user can feed an
+arbitrarily sized string into the buffer, which would trigger a \emph{buffer
+overflow}.
+
+\begin{wrapfigure}[7]{r}{.4\textwidth}
+\begin{minted}{C}
+char buf[8];
+// fgets only read 8 bytes
+fgets(buf, 8, stdin); 
+\end{minted}
+\captionof{listing}{User input reading without buffer overflow vulnerability}
+\label{lst:fgets}
+\end{wrapfigure}
+
+It is recommended that safer variants of the function should be used. 
+For example, in \cref{lst:fgets}, \texttt{fgets} only read predefined number of
+bytes, so there is no buffer overflow vulnerability.
+
+
+
+
+
+
+% where
+% the attacker has control over the index of an array.
+
+
+
+
+%
+\subsubsection{Temporal memory error}
+Dangling
+
+Memory-safe languages such as Go and Rust automatically reclaim objects such that the programmer cannot explicitly deallocate them.
+
+
 
 
 
 \section{Attack primitives}
+
 \subsection{Control-flow hijacking}
 An attacker performs control-flow hijacking by altering the victim program's \emph{control flow} (i.e., the program's program counter) into their intended location. 
 A control flow graph is a graph where
@@ -298,20 +377,39 @@ Guaranteeing full memory safety is often infeasible due to .
 
 \section{Safe Languages}
 
-\section{Isolation/Sandboxing/Compartmentalization}
-One of the earliest ideas in protecting computer systems is to divide the programs into multiple \emph{protection domains}, each with different capabilities based on their trustworthiness~\cite{lampson1974protection}.
-Following this idea, another approach to exploit prevention is to \emph{sandbox} untrusted/error-prone components such that vulnerabilities in those components do not affect other components.
+
+\section{Selective Data Protection \& Compartmentalization}
+Instead of enforcing program-wide memory safety, another approach is to \emph{selectively} enforce protection to only the components of the program of the that matter.
+There are generally two approaches.
+The first approach, \emph{compartmentalization}, follows the principle of the least privilege, tries to split the program into smaller isolated components.
+One prominent technique is \emph{sandboxing}, where each untrusted module is enclosed in a \emph{sandbox} with restricted capabilities.
+% enforces that untrusted parts of the program such that in cannot affect the whole system,
+The second is \emph{selective data protection} appraoch, which is motivated by data leakage attacks such as Heartbleed.
+This approach aims to protect the integrity/confidentiality of only a small set of high-value memory object marked as \emph{sensitive} such that they are immune to software vulnerabilities. 
+
+% is to protect the integrity/confidentiality of only a small set of high-value object marked as \emph{sensitive}.
 
 
-The process model of OSes is one the prime example of sandboxing.
 
-We refer to the process of subdividing an existing program into smaller components as \emph{compartmentalization}.
+\subsection{Isolation primitives}
+\subsubsection{Process isolation}
 
-Compartmentalization provides several benefits.
-\begin{itemize}
-    \item Smaller attack surface
-    \item Smaller protection area
-\end{itemize}
+\subsubsection{In-process isolation with hardware primitive}
+
+\subsubsection{Software-based Fault Isolation (SFI)}
+
+\paragraph{Sandboxing Compiler}
+Sandboxing compiler 
+
+This approach, however, requires a trusted compiler toolchain, which is often hard to achieve in practice.
+For ease of use, many of the current software are distributed in pre-compiled binaries form.
+
+\paragraph{Sandboxing Rewriter}
+Many 
+
+
+\paragraph{Sandboxing Verifier}
+Eliminate the need for 
 
 
 \subsection{Determining Isolation Boundary}
@@ -333,18 +431,53 @@ Performing compartmentalization on complex software such as the kernel is especi
 
 
 
-\subsection{Isolation primitives}
-\subsubsection{Process isolation}
+\subsection{Selective Data Protection}
+Selective data protection is a recent approach, 
 
-\subsubsection{In-process isolation with hardware primitive}
+\begin{wrapfigure}[13]{r}{.5\textwidth}
+\begin{minted}{C}
+int main () {
+  char* priv_key = malloc(8);
+  mark_sensitive(priv_key);
+  ...
+  char* ptr = priv_key; // sensitive
+  char A = ptr[0];      // sensitive
+  ...
+}
+\end{minted}
+\captionof{listing}{Example of annotated sensitive object}
+\label{lst:sensitive-annot}
+\end{wrapfigure}
 
-\subsubsection{Software-based Fault Isolation (SFI)}
+The assumption is that a small set of program data need to be protected at all cost. 
+% Instead of enforcing program-wide memory safety, another approach is to protect the integrity/confidentiality of only a small set of high-value object marked as \emph{sensitive}.
 
-\paragraph{Sandboxing Compiler}
-Sandboxing compiler 
+To enforce such policy, the minimal set of program statements that interact with sensitive data must be identified.
+This is commonly done with the help of \emph{annotation}.
 
-\paragraph{Sandboxing Verifier}
-Native client.
+
+
+
+
+\subsection{Compartmentalization} One of the earliest ideas in protecting
+computer systems is to divide the programs into multiple \emph{protection
+domains}, each with different capabilities based on their
+trustworthiness~\cite{lampson1974protection}.
+Following this idea, \emph{sandbox} untrusted/error-prone components such that
+vulnerabilities in those components do not affect other components.
+
+
+The process model of OSes is one the prime example of sandboxing.
+
+We refer to the process of subdividing an existing program into smaller components as \emph{compartmentalization}.
+
+Compartmentalization provides several benefits.
+\begin{itemize}
+    \item Smaller attack surface
+    \item Smaller protection area
+\end{itemize}
+
+
 
 \subsection{Limitations}
 Isolation is not the perfect solution.
@@ -352,14 +485,17 @@ Isolation is not the perfect solution.
 The interface between the sandbox and the trusted part needs to be carefully written to avoid vulnerabilities.
 
 
-
+\subsubsection{Unsafe data-flow}
 Consider the case where an untrusted processing library is sandboxed.
 
-For process-level isolation, data need to be copied between process through \gls{ipc} channels, which introduce significant overhead.
+For process-level isolation, data need to be copied between process through
+\gls{ipc} channels, which introduce significant overhead.
 
-For this reason, it is common to use in-process isolation primitives such as \gls{sfi} to isolate the memory accesses of the untrusted libraries.
+For this reason, it is common to use in-process isolation primitives such as
+\gls{sfi} to isolate the memory accesses of the untrusted libraries.
 
-To avoid copying, a natural solution is to use a shared memory region accessible by both the host and the untrusted library.
+To avoid copying, a natural solution is to use a shared memory region
+accessible by both the host and the untrusted library.
 
 However, this leads to additional attack vectors.
 
