@@ -9,11 +9,12 @@
 \author{Kha Dinh Duy}
 
 \usepackage[utf8]{inputenc}
-\usepackage[newfloat]{minted}
+\usepackage[newfloat,outputdir=build]{minted}
 \usepackage{csquotes}
 \usepackage{caption}
 \usepackage{graphicx}
 \usepackage[abbreviations]{foreign}
+\usepackage{booktabs}
 \usepackage{wrapfig}
 \usepackage{hyperref} % Hyperlink in refs
 \DeclareFloatingEnvironment[fileext=frm,placement={ht},name=listing]{floatcode}
@@ -46,8 +47,8 @@
 \usepackage[nameinlink]{cleveref}
 
 
-\setminted[C]{linenos=true,frame=single,xleftmargin=.8cm}
-\setminted[asm]{linenos=true,frame=single,xleftmargin=.8cm}
+\setminted[C]{linenos=true,frame=single,xleftmargin=.8cm,fontsize=\small}
+\setminted[asm]{linenos=true,frame=single,xleftmargin=.8cm,fontsize=\small}
 \begin{document}
 
 
@@ -275,7 +276,9 @@ A common trigger for spatial memory error is through \emph{buffer overflow},
 where a pointer to a buffer is continuously incremented/decremented in a loop
 (without proper bounds check).
 
-\begin{wrapfigure}[12]{r}{.4\textwidth}
+
+\begin{figure*}[t]
+\begin{minipage}[t]{.4\textwidth}
 \begin{minted}{C}
 int main()
 {
@@ -283,31 +286,66 @@ int main()
   // buf can be overflow
   gets(buf); 
   printf("%s\n", buf);
-  return 0;
 }
 \end{minted}
-\captionof{listing}{Code with buffer overflow vulnerability}
+\captionof{listing}{Program with buffer overflow vulnerability.}
 \label{lst:buffer_overflow}
-\end{wrapfigure}
-For example, in \cref{lst:buffer_overflow}, the \texttt{gets} function copy
-data from \texttt{stdio} into an array on the stack.
-However, \texttt{gets} is not aware of the buffer size, so the user can feed an
-arbitrarily sized string into the buffer, which would trigger a \emph{buffer
-overflow}.
-
-\begin{wrapfigure}[7]{r}{.4\textwidth}
 \begin{minted}{C}
 char buf[8];
 // fgets only read 8 bytes
 fgets(buf, 8, stdin); 
 \end{minted}
-\captionof{listing}{User input reading without buffer overflow vulnerability}
+\captionof{listing}{User input reading \emph{without} buffer overflow vulnerability.}
 \label{lst:fgets}
-\end{wrapfigure}
+\end{minipage}%
+\hfill\begin{minipage}[t]{.54\textwidth}
+\begin{minted}{C}
+char buf[8];
+int index = attacker_get_int();
+// index can be any number
+buf[index] = attacker_get_char();
+\end{minted}
+\captionof{listing}{Array access with attacker-controlled index.}
+\label{lst:index_bug}
+\begin{minted}{C}
+int num_items = attacker_get_int();
+int array_size = num_items * sizeof(int);
+// The allocated size might be smaller 
+// than intended due to overflow
+char* array = malloc(array_size);
+for (int i = 0; i < num_items; i++){
+  array[i] = attacker_get_int();
+}
+\end{minted}
+\captionof{listing}{Integer overflow bug.}
+\label{lst:integer_overflow}
+\end{minipage}
+\caption{Examples of spatial memory error.}
+\end{figure*}
 
-It is recommended that safer variants of the function should be used. 
+
+
+For example, in \cref{lst:buffer_overflow}, the \texttt{gets} function copy
+data from \texttt{stdio} into an array on the stack.
+However, \texttt{gets} is not aware of the buffer size, so the user can feed an
+arbitrarily sized string into the buffer, which would trigger a \emph{buffer
+overflow}.
+For this reason, it is commonly recommended that safer variants of the function should be used. 
 For example, in \cref{lst:fgets}, \texttt{fgets} only read predefined number of
 bytes, so there is no buffer overflow vulnerability.
+
+
+
+
+% \begin{wrapfigure}[17]{l}{.6\textwidth}
+
+Another trigger for spatial memory error is through \emph{indexing bug}, where
+the attacker have control over an index of an array.
+Consider the example in \cref{lst:index_bug}. 
+If the attacker can control the variable \texttt{index} (\eg, through terminal
+input); they can write anywhere in memory with arbitrary values.
+
+A variant of indexing bug is through \emph{integer overflow}.
 
 
 
@@ -317,20 +355,85 @@ bytes, so there is no buffer overflow vulnerability.
 % where
 % the attacker has control over the index of an array.
 
+% \begin{wrapfigure}[30]{R}{.6\textwidth}
+\begin{figure}[t]
+\begin{minted}{C}
+typedef struct { long used; char buf[24]; } Array;      // 32 bytes
 
+typedef struct {
+  long status; void *start, *current;
+  int (*handler)(void *buf);
+} Parser;                                               // 32 bytes
+
+enum Command {INVALID, PARSE, ... };
+int net_parser(void* buf);                  // Intended parsing function
+
+// Attacker is a network client
+int handle_net_input(int client_fd) {
+  Parser *parser = malloc(sizeof(Parser));
+  parser->handler = &net_parser; 
+  enum Command cmd = INVALID;
+
+  read(client_fd, &cmd, sizeof(cmd));
+  switch (cmd) {
+    case INVALID: free(parser)  // missing break
+    case PARSE:
+      Array *array = malloc(sizeof(Array)); // array now points to the freed object 
+      read(client_fd, array->buf, 24)       // array is now initialized by attacker
+      parser->handler(array->buf);          // use-after-free.
+      // Jump to attacker-controlled location
+}}
+\end{minted}
+\captionof{listing}{Adapted from \cite{wickman2021preventing}.}
+% \end{wrapfigure}
+\end{figure}
+
+
+
+\subsubsection{Temporal memory error}
+
+A \emph{dangling pointer} is an invalid pointer created when the pointee object
+is freed or deallocated, but the pointer still persist in the program and is later
+used.
+When such pointer is used, temporal memory error is triggered.
+The common variants of temporal memory safety error are \gls{uaf}, where a
+freed pointer is later dereferenced, \emph{free-after-free} or \emph{double-free},
+where a freed pointer is freed again.
+
+
+An attacker exploit a program with a \gls{uaf} vulnerability following the pattern
+\emph{free-reallocate-use}~\cite{wickman2021preventing}.
+In the first step, the attacker trigger the program to free a vulnerable object. 
+Then, they request the allocation of a similar-sized object to obtain the freed
+memory, and fill it with malicious data.
+Finally, the attacker trigger the program to \emph{use} the freed object. 
+The program will in turn execute with attacker-injected input.
+
+Memory-safe languages such as Go and Rust automatically reclaim objects such
+that the programmer cannot explicitly deallocate them, which prevent temporal
+memory error.
+
+
+Temporal memory safety error most commonly occur for heap objects, due to (1)
+heap memory management is more error-prone due to programming errors and (2)
+pointers to the stack is commonly \emph{temporary}, which means they are not
+stored into global variables/heap objects in a well-defined program.
+However, it is still possible for stack object use-after-free.
 
 
 %
-\subsubsection{Temporal memory error}
-Dangling
 
-Memory-safe languages such as Go and Rust automatically reclaim objects such that the programmer cannot explicitly deallocate them.
+
+
+
+
 
 
 
 
 
 \section{Attack primitives}
+\subsection{Arbitrary read and write}
 
 \subsection{Control-flow hijacking}
 An attacker performs control-flow hijacking by altering the victim program's \emph{control flow} (i.e., the program's program counter) into their intended location. 
@@ -392,6 +495,8 @@ This approach aims to protect the integrity/confidentiality of only a small set 
 
 
 \subsection{Isolation primitives}
+\subsection{Trusted execution environments}
+
 \subsubsection{Process isolation}
 
 \subsubsection{In-process isolation with hardware primitive}
